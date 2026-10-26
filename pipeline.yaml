@@ -11,6 +11,8 @@ spec:
     - name: repo-url
     - name: branch
       default: main
+    - name: app-name
+      default: tax-calculator
   tasks:
   
     - name: init
@@ -34,3 +36,55 @@ spec:
         value: $(params.branch)
       runAfter:
         - init
+
+    - name: npminstall
+      workspaces:
+        - name: source
+          workspace: pipeline-workspace
+      taskRef:
+        name: npm
+      params:
+      - name: args
+        value: "install"
+      runAfter:
+        - clone
+
+    - name: tests
+      workspaces:
+        - name: source
+          workspace: pipeline-workspace
+      taskRef:
+        name: jasmine
+      runAfter:
+        - npminstall
+
+    - name: build
+      workspaces:
+        - name: source
+          workspace: pipeline-workspace
+      taskRef:
+        name: buildah
+        kind: ClusterTask
+      params:
+      - name: IMAGE
+        value: $(params.build-image)
+      - name: DOCKERFILE
+        value: ./Dockerfile.openshift
+      runAfter:
+        - tests
+
+    - name: deploy
+      taskRef:
+        name: openshift-client
+        kind: ClusterTask
+      params:
+      - name: SCRIPT
+        value: |
+          oc create deployment $(params.app-name) --image=$(params.build-image) --dry-run=client -o yaml | oc apply -f -
+          oc rollout restart deployment/$(params.app-name)
+          oc rollout status deployment/$(params.app-name)
+          oc get service $(params.app-name) || oc expose deployment $(params.app-name) --port=8080
+          oc get route $(params.app-name) || oc expose service $(params.app-name)
+          oc get route $(params.app-name)
+      runAfter:
+        - build
